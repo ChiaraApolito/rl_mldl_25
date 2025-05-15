@@ -1,59 +1,68 @@
-"""Test an RL agent on the OpenAI Gym Hopper environment"""
+"""Test two agent"""
 import argparse
 
-import torch
-import gym
+# import torch
+import numpy as np
 
+import gym
 from env.custom_hopper import *
-from agent import Agent, Policy
+
+from stable_baselines3 import PPO
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', default=None, type=str, help='Model path')
+    #parser.add_argument('--model', default=None, type=str, help='Model path')
     parser.add_argument('--device', default='cpu', type=str, help='network device [cpu, cuda]')
     parser.add_argument('--render', default=False, action='store_true', help='Render the simulator')
     parser.add_argument('--episodes', default=10, type=int, help='Number of test episodes')
-
+    
     return parser.parse_args()
 
-args = parse_args()
 
+def test_sb3_model(model_path, env_id, episodes=50, render=True):
+    env = gym.make(env_id)
+    model = PPO.load(model_path, env=env)
+    
+    returns = []
+    for ep in range(episodes):
+        obs = env.reset()
+        done = False
+        total_reward = 0
+        
+        while not done:
+            action, _states = model.predict(obs, deterministic=True)
+            obs, reward, done, info = env.step(action)
+            total_reward += reward
+            
+            if render:
+                env.render()
+        
+        print(f"Episode {ep+1}: Return = {total_reward:.2f}")
+        returns.append(total_reward)
+        
+    mean_return = np.mean(returns)
+    std_return = np.std(returns)
+    print(f"Results on {env_id} with model {model_path}: Mean Return = {mean_return:.2f} ± {std_return:.2f}")
+    env.close()
+    return mean_return, std_return
 
 def main():
 
-	env = gym.make('CustomHopper-source-v0')
-	# env = gym.make('CustomHopper-target-v0')
-
-	print('Action space:', env.action_space)
-	print('State space:', env.observation_space)
-	print('Dynamics parameters:', env.get_parameters())
+	args = parse_args()
 	
-	observation_space_dim = env.observation_space.shape[-1]
-	action_space_dim = env.action_space.shape[-1]
+	test_cases = [
+        ('source→source', './ppo_hopper_final_model_source.zip', 'CustomHopper-source-v0'),
+        ('source→target', './ppo_hopper_final_model_source.zip', 'CustomHopper-target-v0'),
+        ('target→target', './ppo_hopper_final_model_target.zip', 'CustomHopper-target-v0'),
+    ]
 
-	policy = Policy(observation_space_dim, action_space_dim)
-	policy.load_state_dict(torch.load(args.model), strict=True)
+	print(f"Running tests on fixed configurations with {args.episodes} episodes each\n")
+     
+	for label, model_path, env_id in test_cases:
+         mean_ret, std_ret = test_sb3_model(model_path, env_id, episodes=args.episodes, render=args.render)
+         print(f"{label} | Env: {env_id} | Mean Return: {mean_ret:.2f} ± {std_ret:.2f}")
 
-	agent = Agent(policy, device=args.device)
-
-	for episode in range(args.episodes):
-		done = False
-		test_reward = 0
-		state = env.reset()
-
-		while not done:
-
-			action, _ = agent.get_action(state, evaluation=True)
-
-			state, reward, done, info = env.step(action.detach().cpu().numpy())
-
-			if args.render:
-				env.render()
-
-			test_reward += reward
-
-		print(f"Episode: {episode} | Return: {test_reward}")
-	
 
 if __name__ == '__main__':
 	main()
