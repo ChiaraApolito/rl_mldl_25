@@ -19,6 +19,14 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import os
+import argparse
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--env', type=str, default='source', choices=['source', 'target'], help='Environment to train on')
+    return parser.parse_args()
+
+args = parse_args()
 
 
 def plot_learningcurves(file_path):
@@ -39,53 +47,49 @@ def plot_learningcurves(file_path):
     plt.tight_layout()
 
     # Salva la figura nella directory desiderata
-    if not os.path.exists('tlearning_curves'):
+    if not os.path.exists('learning_curves'):
         os.makedirs('learning_curves', exist_ok=True)
 
     # Costruisci un nome file coerente in base al path del CSV
     base_name = os.path.basename(file_path).replace('.monitor.csv', '')
-    plt.savefig(f"learning_curves/returns_plot_{base_name}.png")
+    # Prendi la cartella genitore per differenziare i nomi
+    folder_name = os.path.basename(os.path.dirname(file_path))
+    plt.savefig(f"learning_curves/returns_plot_{folder_name}_{base_name}.png")
     # plt.show()
 
+def train_and_save(env_id, log_dir, model_path, seed=42):
+    print(f"\n🚀 Training on {env_id}...")
 
-
-def main():
     seed = 42
-    train_env = gym.make('CustomHopper-source-v0')
+    train_env = gym.make(env_id)
     train_env.seed(seed)
     # Aggiungi il wrapper Monitor all'ambiente di train
     # per allenare e valutare un agente, è consigliato avvolgere l'ambiente con il Monitor wrapper, 
     # per evitare che venga modificata la durata degli episodi o le ricompense in modo non 
     # intenzionale da parte di altri wrapper
-    train_env = Monitor(train_env, './ppo_hopper_logs/train_monitor', allow_early_resets=True)
+    train_env = Monitor(train_env, f"{log_dir}/train_monitor", allow_early_resets=True)
 
     print('State space:', train_env.observation_space)  # state-space
     print('Action space:', train_env.action_space)  # action-space
     print('Dynamics parameters:', train_env.get_parameters())  # masses of each link of the Hopper
 
-    #
-    # TASK 4 & 5: train and test policies on the Hopper env with stable-baselines3
-    #
-
     # Learning rate che va da 2.5e-4 a 0 durante il training
     lr_schedule = get_linear_fn(start=2.5e-4, end=0.0, end_fraction=1.0)
 
-    # Callback per valutare la performance
-    eval_env = gym.make('CustomHopper-source-v0')
+    eval_env = gym.make(env_id)
     eval_env.seed(seed + 1)
-
     # Aggiungi il wrapper Monitor all'ambiente di valutazione
-    eval_env = Monitor(eval_env, './ppo_hopper_logs/monitor', allow_early_resets=True)
-
+    eval_env = Monitor(eval_env, f"{log_dir}/eval_monitor", allow_early_resets=True)
+    
     # Verifica che l’ambiente sia compatibile con Stable-Baselines3
     check_env(train_env)
-
+    
     # Ogni eval_freq timesteps, il modello viene valutato.
     # Se la reward media è la migliore ottenuta finora, il modello viene salvato in ./ppo_hopper_logs/best_model.zip.
     # I risultati (media, deviazione standard, numero di episodi) vengono loggati in ./ppo_hopper_logs/
     eval_callback = EvalCallback(eval_env, 
                                  best_model_save_path='./ppo_hopper_logs/',
-                                 log_path='./ppo_hopper_logs/', 
+                                 log_path='./ppo_hopper_logs/',
                                  eval_freq=5000,
                                  deterministic=True, 
                                  render=False)
@@ -94,7 +98,7 @@ def main():
     model = PPO(
         policy="MlpPolicy",
         env=train_env,
-        verbose=1,
+        verbose=0,
         n_steps=2048,       # Numero di passi di simulazione raccolti prima di ogni aggiornamento della policy
         batch_size=64,      # Numero di esempi usati in ogni minibatch durante il training
         gae_lambda=0.90,    # Parametro per Generalized Advantage Estimation (GAE). Più vicino a 1 → meno bias, più varianza
@@ -107,25 +111,32 @@ def main():
         learning_rate = lr_schedule   # Learning rate dinamico
     )
 
-    model.learn(total_timesteps=300_000, callback=eval_callback)
-
-    model.save("./ppo_hopper_final_model")
+    model.learn(total_timesteps=100_000, callback=eval_callback)
+    model.save(model_path)
 
     mean_reward, std_reward = evaluate_policy(
-        model, 
-        env= eval_env, 
-        n_eval_episodes=10, 
-        deterministic=True, 
-        render=False, 
-        callback=None, 
-        reward_threshold=None, 
-        return_episode_rewards=False, 
-        warn=True)
-    
-    # plot dei returns
-    plot_learningcurves('./ppo_hopper_logs/train_monitor.monitor.csv')
-    plot_learningcurves('./ppo_hopper_logs/monitor.monitor.csv')
+        model,
+        env=eval_env,
+        n_eval_episodes=10,
+        deterministic=True
+    )
+    print(f"✅ Mean reward on {env_id}: {mean_reward:.2f} ± {std_reward:.2f}")
 
+    plot_learningcurves(f'{log_dir}/train_monitor.monitor.csv')
+    plot_learningcurves(f'{log_dir}/eval_monitor.monitor.csv')
+
+def main():
+    train_and_save(
+        env_id='CustomHopper-source-v0',
+        log_dir='./ppo_hopper_logs_source',
+        model_path='./ppo_hopper_final_model_source'
+    )
+
+    train_and_save(
+        env_id='CustomHopper-target-v0',
+        log_dir='./ppo_hopper_logs_target',
+        model_path='./ppo_hopper_final_model_target'
+    )
 
 if __name__ == '__main__':
     main()
