@@ -19,14 +19,6 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import os
-import argparse
-
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--env', type=str, default='source', choices=['source', 'target'], help='Environment to train on')
-    return parser.parse_args()
-
-args = parse_args()
 
 
 def plot_learningcurves(file_path):
