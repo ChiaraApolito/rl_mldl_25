@@ -43,7 +43,6 @@ def test_sb3_model(model_path, env_id, episodes=50, render=True):
         
     mean_return = np.mean(returns)
     std_return = np.std(returns)
-    print(f"Results on {env_id} with model {model_path}: Mean Return = {mean_return:.2f} ± {std_return:.2f}")
     env.close()
     return mean_return, std_return
 
