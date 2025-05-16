@@ -1,28 +1,47 @@
 """Test two agent"""
 import argparse
 
-# import torch
 import numpy as np
 
 import gym
 from env.custom_hopper import *
 
 from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.monitor import Monitor
+import os
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    #parser.add_argument('--model', default=None, type=str, help='Model path')
     parser.add_argument('--device', default='cpu', type=str, help='network device [cpu, cuda]')
-    parser.add_argument('--render', default=False, action='store_true', help='Render the simulator')
+    parser.add_argument('--render', default=True, action='store_true', help='Render the simulator')
     parser.add_argument('--episodes', default=50, type=int, help='Number of test episodes')
     
     return parser.parse_args()
 
 
-def test_sb3_model(model_path, env_id, episodes=50, render=True):
-    env = gym.make(env_id)
-    model = PPO.load(model_path, env=env)
+def test_sb3_model(model_path, env_id, episodes, render):
+
+    env_raw = gym.make(env_id)
+    env_raw = Monitor(env_raw)
+    # DummyVecEnv è richiesto per VecNormalize
+    vec_env = DummyVecEnv([lambda: env_raw])
+    # Percorso del file vecnormalize salvato durante il training
+    log_dir = './ppo_hopper_logs_source' if 'source' in env_id else './ppo_hopper_logs_target'
+    normalize_path = os.path.join(log_dir, "vecnormalize.pkl")
+
+    # Carica VecNormalize, se esiste
+    if os.path.exists(normalize_path):
+        vec_env = VecNormalize.load(normalize_path, vec_env)
+        vec_env.training = False  # Disattiva aggiornamento statistiche
+        vec_env.norm_reward = False  # Non normalizzare reward a test time
+    else:
+        print(f"⚠️ Warning: VecNormalize non trovato a {normalize_path}. Test senza normalizzazione.")
+
+    model = PPO.load(model_path, env=vec_env)
+    env = vec_env
+
     
     returns = []
     for ep in range(episodes):
@@ -33,12 +52,12 @@ def test_sb3_model(model_path, env_id, episodes=50, render=True):
         while not done:
             action, _states = model.predict(obs, deterministic=True)
             obs, reward, done, info = env.step(action)
-            total_reward += reward
+            total_reward += float(reward)
             
             if render:
                 env.render()
         
-        print(f"Episode {ep+1}: Return = {total_reward:.2f}")
+        print(f"Episode {ep+1}: Return = {float(total_reward):.2f}")
         returns.append(total_reward)
         
     mean_return = np.mean(returns)
