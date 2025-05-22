@@ -29,16 +29,9 @@ class Policy(torch.nn.Module):
         self.fc3_actor_mean = torch.nn.Linear(self.hidden, action_space)
         
         # Learned standard deviation for exploration at training time 
-        self.sigma_activation = F.softplus
+        self.sigma_activation = F.softplus #to be sure self.sigma is pos
         init_sigma = 0.5
-        self.sigma = torch.nn.Parameter(torch.zeros(self.action_space)+init_sigma)
-
-
-        """
-            Critic network
-        """
-        # TASK 3: critic network for actor-critic algorithm
-
+        self.sigma = torch.nn.Parameter(torch.zeros(self.action_space)+init_sigma) #parameters to be learnt: st. dev.
 
         self.init_weights()
 
@@ -58,14 +51,8 @@ class Policy(torch.nn.Module):
         x_actor = self.tanh(self.fc2_actor(x_actor))
         action_mean = self.fc3_actor_mean(x_actor)
 
-        sigma = self.sigma_activation(self.sigma)
+        sigma = self.sigma_activation(self.sigma) #to be sure self.sigma is pos
         normal_dist = Normal(action_mean, sigma)
-
-
-        """
-            Critic
-        """
-        # TASK 3: forward in the critic network
 
         
         return normal_dist
@@ -87,28 +74,26 @@ class Agent(object):
 
     def update_policy(self):
         action_log_probs = torch.stack(self.action_log_probs, dim=0).to(self.train_device).squeeze(-1)
-        states = torch.stack(self.states, dim=0).to(self.train_device).squeeze(-1)
-        next_states = torch.stack(self.next_states, dim=0).to(self.train_device).squeeze(-1)
         rewards = torch.stack(self.rewards, dim=0).to(self.train_device).squeeze(-1)
-        done = torch.Tensor(self.done).to(self.train_device)
 
-        self.states, self.next_states, self.action_log_probs, self.rewards, self.done = [], [], [], [], []
+        returns = discount_rewards(rewards, self.gamma)  
 
-        #
-        # TASK 2:
-        #   - compute discounted returns
-        #   - compute policy gradient loss function given actions and returns
-        #   - compute gradients and step the optimizer
-        #
+        baseline  = returns.mean()      
+        advantage = returns - baseline  
 
+        T = returns.size(0)
+        discounts = (self.gamma ** torch.arange(T, 
+                          dtype=returns.dtype, 
+                          device=self.train_device))
 
-        #
-        # TASK 3:
-        #   - compute boostrapped discounted return estimates
-        #   - compute advantage terms
-        #   - compute actor loss and critic loss
-        #   - compute gradients and step the optimizer
-        #
+        policy_loss = -(discounts * action_log_probs * advantage).mean()
+
+        self.optimizer.zero_grad()
+        policy_loss.backward()
+        self.optimizer.step()
+
+        self.action_log_probs, self.rewards = [], []
+
 
         return        
 
@@ -137,4 +122,3 @@ class Agent(object):
         self.action_log_probs.append(action_log_prob)
         self.rewards.append(torch.Tensor([reward]))
         self.done.append(done)
-

@@ -1,86 +1,92 @@
-"""Test two agent"""
+"""Test an RL agent on the OpenAI Gym Hopper environment"""
 import argparse
+import importlib
+import sys
+from pathlib import Path
 
-import numpy as np
-
+import torch
 import gym
+
 from env.custom_hopper import *
 
-from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
-from stable_baselines3.common.monitor import Monitor
-import os
 
-
-def parse_args():
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument('--device', default='cpu', type=str, help='network device [cpu, cuda]')
-    parser.add_argument('--render', default=True, action='store_true', help='Render the simulator')
-    parser.add_argument('--episodes', default=50, type=int, help='Number of test episodes')
-    
+    parser.add_argument("--agent",   default="REINFORCE",
+                        help="Python file in agents/ (no .py) to load")
+    parser.add_argument("--model",   default=None,
+                        help="Path of .mdl weights file "
+                             "(defaults to models_weights/<agent>_model.mdl)")
+    parser.add_argument("--device",  default="cpu", choices=["cpu", "cuda"],
+                        help="Device for networks")
+    parser.add_argument("--episodes", default=10, type=int,
+                        help="Number of evaluation episodes")
+    parser.add_argument("--render",  action="store_true",
+                        help="Render simulation")
     return parser.parse_args()
 
+def import_agent_module(agent_name: str):
+    try:
+        module = importlib.import_module(f"agents.{agent_name}")
+    except ModuleNotFoundError as exc:
+        print(f"[ERROR] agent '{agent_name}' not found!", file=sys.stderr)
+        raise exc
 
-def test_sb3_model(model_path, env_id, episodes, render):
+    if not all(hasattr(module, cls) for cls in ("Policy", "Agent")):
+        raise AttributeError(
+            f"[ERROR] {agent_name} should expose 'Policy' and 'Agent' classes"
+        )
+    return module.Policy, module.Agent
 
-    env_raw = gym.make(env_id)
-    env_raw = Monitor(env_raw)
-    # DummyVecEnv è richiesto per VecNormalize
-    vec_env = DummyVecEnv([lambda: env_raw])
-    # Percorso del file vecnormalize salvato durante il training
-    log_dir = './ppo_hopper_logs_source' if 'source' in env_id else './ppo_hopper_logs_target'
-    normalize_path = os.path.join(log_dir, "vecnormalize.pkl")
 
-    # Carica VecNormalize, se esiste
-    if os.path.exists(normalize_path):
-        vec_env = VecNormalize.load(normalize_path, vec_env)
-        vec_env.training = False  # Disattiva aggiornamento statistiche
-        vec_env.norm_reward = False  # Non normalizzare reward a test time
-    else:
-        print(f"⚠️ Warning: VecNormalize non trovato a {normalize_path}. Test senza normalizzazione.")
+def main() -> None:
+    args = parse_args()
 
-    model = PPO.load(model_path, env=vec_env)
-    env = vec_env
+    # --- environment -------------------------------------------------------
+    env = gym.make("CustomHopper-source-v0")
+    # env = gym.make("CustomHopper-target-v0")
 
-    
-    returns = []
-    for ep in range(episodes):
-        obs = env.reset()
-        done = False
-        total_reward = 0
-        
+    print("Action space:", env.action_space)
+    print("State space :", env.observation_space)
+    print("Dynamics parameters:", env.get_parameters())
+
+    # --- import agent ------------------------------------------------------
+    PolicyClass, AgentClass = import_agent_module(args.agent)
+
+    obs_dim = env.observation_space.shape[-1]
+    act_dim = env.action_space.shape[-1]
+
+    policy = PolicyClass(obs_dim, act_dim).to(args.device)
+
+    model_path = (Path(args.model)
+                  if args.model is not None
+                  else Path(f"models_weights/{args.agent}_model.mdl"))
+
+    if not model_path.exists():
+        raise FileNotFoundError(
+            f"[ERROR] weights file '{model_path}' does not exist "
+            "(pass --model <path> if different)"
+        )
+
+    policy.load_state_dict(torch.load(model_path, map_location=args.device))
+
+    agent = AgentClass(policy, device=args.device)
+
+    # --- evaluation loop ---------------------------------------------------
+    for episode in range(args.episodes):
+        state = env.reset()
+        done, test_reward = False, 0.0
+
         while not done:
-            action, _states = model.predict(obs, deterministic=True)
-            obs, reward, done, info = env.step(action)
-            total_reward += float(reward)
-            
-            if render:
+            with torch.no_grad():
+                action, _ = agent.get_action(state, evaluation=True)
+
+            state, reward, done, info = env.step(action.cpu().numpy())
+            if args.render:
                 env.render()
-        
-        print(f"Episode {ep+1}: Return = {float(total_reward):.2f}")
-        returns.append(total_reward)
-        
-    mean_return = np.mean(returns)
-    std_return = np.std(returns)
-    env.close()
-    return mean_return, std_return
+            test_reward += reward
 
-def main():
+        print(f"Episode: {episode} | Return: {test_reward:.2f}")
 
-	args = parse_args()
-	
-	test_cases = [
-        ('source→source', './ppo_hopper_final_model_source.zip', 'CustomHopper-source-v0'),
-        ('source→target', './ppo_hopper_final_model_source.zip', 'CustomHopper-target-v0'),
-        ('target→target', './ppo_hopper_final_model_target.zip', 'CustomHopper-target-v0'),
-    ]
-
-	print(f"Running tests on fixed configurations with {args.episodes} episodes each\n")
-     
-	for label, model_path, env_id in test_cases:
-         mean_ret, std_ret = test_sb3_model(model_path, env_id, episodes=args.episodes, render=args.render)
-         print(f"{label} | Env: {env_id} | Mean Return: {mean_ret:.2f} ± {std_ret:.2f}")
-
-
-if __name__ == '__main__':
-	main()
+if __name__ == "__main__":
+    main()
