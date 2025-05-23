@@ -68,7 +68,7 @@ def plot_learning_curve(monitor_env, file_path):
     plt.close()
 
 
-def train_and_save(env_id, log_dir, model_path, use_udr=False):
+def train_and_save(env_id, log_dir, model_path, use_udr, custom_params=None):
     print(f"\n Prepare environment {env_id} (UDR={use_udr})...")
     # 1) Environment creation and optional UDR
     if env_id == 'CustomHopper-source-v0' and use_udr:
@@ -102,23 +102,28 @@ def train_and_save(env_id, log_dir, model_path, use_udr=False):
     check_env(vec_env.envs[0])
 
     # 5) Create PPO model with linear lr schedule
-    lr_schedule = get_linear_fn(start=1e-4, end=0.0, end_fraction=1.0)
-    model = PPO(
-        'MlpPolicy',
-        vec_env,
-        seed=SEED,
-        verbose=0,
-        n_steps=8192,
-        batch_size=64,
-        gae_lambda=0.9,
-        gamma=0.99,
-        n_epochs=15,
-        clip_range=0.2,
-        ent_coef=0.005,
-        vf_coef=0.5,
-        max_grad_norm=0.5,
-        learning_rate=lr_schedule
-    )
+    # lr_schedule = get_linear_fn(start=1e-4, end=0.0, end_fraction=1.0)
+
+    ppo_kwargs = {
+    'policy': 'MlpPolicy',
+    'env': vec_env,
+    'seed': SEED,
+    'verbose': 0,
+    'n_steps': 8192,
+    'n_epochs': 15,
+    'gamma': 0.99,
+    'ent_coef': 0.005,
+    'vf_coef': 0.5,
+    'max_grad_norm': 0.5
+    }
+
+    if custom_params:
+        ppo_kwargs.update(custom_params)
+
+    if 'learning_rate' not in ppo_kwargs:
+        ppo_kwargs['learning_rate'] = get_linear_fn(start=1e-4, end=0.0, end_fraction=1.0)
+
+    model = PPO(**ppo_kwargs)    # ** per passare argomenti nominali a una funzione come dizionario
 
     # 6) Evaluation callback
     eval_callback = EvalCallback(
@@ -156,7 +161,7 @@ def main():
         'CustomHopper-source-v0',
         './ppo_hopper_logs_source',
         './ppo_hopper_final_model_source',
-        use_udr=args.use_udr
+        use_udr=True #args.use_udr
     )
     train_and_save(
         'CustomHopper-target-v0',
